@@ -33,7 +33,11 @@ class HTTPResponse(object):
         self.body = body
 
 class HTTPClient(object):
-    #def get_host_port(self,url):
+    def parse_url(self,url):
+        url_info = urllib.parse.urlparse(url)
+        self.hostname = url_info.hostname
+        self.port = url_info.port if url_info.port else 80
+        self.path = url_info.path if url_info.path else '/'
 
     def connect(self, host, port):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -41,13 +45,20 @@ class HTTPClient(object):
         return None
 
     def get_code(self, data):
-        return None
+        return int(data.split("\r\n")[0].split()[1])
 
     def get_headers(self,data):
-        return None
+        header_str = data.split("\r\n\r\n")[0].split("\r\n")[1:]
+        headers = dict()
+        for header in header_str:
+            split_head = header.split(":")
+            key = split_head[0]
+            value = ":".join(split_head[1:]).lstrip()
+            headers[key] = value.lstrip()
+        return headers
 
     def get_body(self, data):
-        return None
+        return data.split("\r\n\r\n")[1]
     
     def sendall(self, data):
         self.socket.sendall(data.encode('utf-8'))
@@ -57,24 +68,59 @@ class HTTPClient(object):
 
     # read everything from the socket
     def recvall(self, sock):
-        buffer = bytearray()
+        buf = bytearray()
         done = False
         while not done:
             part = sock.recv(1024)
             if (part):
-                buffer.extend(part)
+                buf.extend(part)
             else:
                 done = not part
-        return buffer.decode('utf-8')
+        return buf.decode('utf-8')
 
     def GET(self, url, args=None):
-        code = 500
-        body = ""
+        self.parse_url(url)
+        
+        req =   "GET {path} HTTP/1.1\r\n".format(path=self.path) + \
+                "Host: {host}:{port}\r\n".format(host=self.hostname, port=self.port) + \
+                "Accept: */*\r\n" + \
+                "Connection: close\r\n\r\n"
+
+        self.connect(self.hostname, self.port)
+        self.sendall(req)
+        response = self.recvall(self.socket)
+        self.close()
+
+        code = self.get_code(response)
+        body = self.get_body(response)
+
         return HTTPResponse(code, body)
 
     def POST(self, url, args=None):
-        code = 500
-        body = ""
+        self.parse_url(url)
+
+        req =   "POST {path} HTTP/1.1\r\n".format(path=self.path) + \
+                "Host: {host}:{port}\r\n".format(host=self.hostname, port=self.port) + \
+                "Accept: */*\r\n" + \
+                "Connection: close\r\n"
+
+        if args:
+            content = urllib.parse.urlencode(args)
+            content_length = str(len(content))
+            req += "Content-Type: application/x-www-form-urlencoded\r\n"
+            req += "Content-Length: {content_length}\r\n\r\n".format(content_length = content_length)
+            req += content
+        else:
+            req += "Content-Length: {content_length}\r\n\r\n".format(content_length = '0')
+
+        self.connect(self.hostname, self.port)
+        self.sendall(req)
+        response = self.recvall(self.socket)
+        self.close()
+
+        code = self.get_code(response)
+        body = self.get_body(response)
+
         return HTTPResponse(code, body)
 
     def command(self, url, command="GET", args=None):
@@ -90,6 +136,8 @@ if __name__ == "__main__":
         help()
         sys.exit(1)
     elif (len(sys.argv) == 3):
-        print(client.command( sys.argv[2], sys.argv[1] ))
+        # printout result to stdout
+        print(client.command( sys.argv[2], sys.argv[1]).body)
     else:
-        print(client.command( sys.argv[1] ))
+        # printout result to stdout
+        print(client.command( sys.argv[1] ).body)
